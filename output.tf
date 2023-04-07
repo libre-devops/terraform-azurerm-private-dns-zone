@@ -1,32 +1,34 @@
-output "sa_id" {
-  value       = azurerm_storage_account.sa.id
-  description = "The ID of the storage account"
+output "dns_zone_id" {
+  description = "The dns zone ids"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone.privatelink_dns_zones)[*].id : values(azurerm_private_dns_zone.private_dns_zone)[*].id
 }
 
-output "sa_name" {
-  value       = azurerm_storage_account.sa.name
-  description = "The name of the storage account"
+output "dns_zone_name" {
+  description = "The dns zone name"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone.privatelink_dns_zones)[*].name : values(azurerm_private_dns_zone.private_dns_zone)[*].name
 }
 
-output "sa_primary_access_key" {
-  value       = azurerm_storage_account.sa.primary_access_key
-  description = "The primary access key of the storage account"
-  sensitive   = true
+output "dns_zone_max_number_of_record_sets" {
+  description = "The max number of record sets"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone.privatelink_dns_zones)[*].max_number_of_record_sets : values(azurerm_private_dns_zone.private_dns_zone)[*].max_number_of_record_sets
 }
 
-output "sa_primary_blob_endpoint" {
-  value       = azurerm_storage_account.sa.primary_blob_endpoint
-  description = "The primary blob endpoint of the storage account"
+output "dns_zone_max_number_of_virtual_network_links" {
+  description = "The dns max number of virtual network links"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone.privatelink_dns_zones)[*].max_number_of_virtual_network_links : values(azurerm_private_dns_zone.private_dns_zone)[*].max_number_of_virtual_network_links
 }
 
-output "sa_primary_connection_string" {
-  value       = azurerm_storage_account.sa.primary_blob_connection_string
-  description = "The primary blob connection string of the storage account"
-  sensitive   = true
+output "dns_zone_max_number_of_virtual_network_links_with_registration" {
+  description = "The max number of virtual network links with registration"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone.privatelink_dns_zones)[*].max_number_of_virtual_network_links_with_registration : values(azurerm_private_dns_zone.private_dns_zone)[*].max_number_of_virtual_network_links_with_registration
 }
 
-output "sa_secondary_access_key" {
-  value       = azurerm_storage_account.sa.secondary_access_key
-  description = "The secondary access key of the storage account"
-  sensitive   = true
+output "dns_number_of_record_sets" {
+  description = "The max number of virtual network links with registration"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone.privatelink_dns_zones)[*].number_of_record_sets : values(azurerm_private_dns_zone.private_dns_zone)[*].number_of_record_sets
+}
+
+output "vnet_link_id" {
+  description = "The vnet link ids"
+  value       = var.create_default_privatelink_zones ? values(azurerm_private_dns_zone_virtual_network_link.privatelink_dns_zone_link)[*].id : values(azurerm_private_dns_zone_virtual_network_link.private_dns_zone_link)[*].id
 }
