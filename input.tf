@@ -1,25 +1,13 @@
-variable "soa_record" {
-  type        = any
-  description = "The SOA record block is one is used"
-  default     = null
+variable "create_default_privatelink_zones" {
+  type        = bool
+  description = "Whether or not the module should create all private link zones or be ran in standalone zone mode. defaults to false"
+  default     = false
 }
 
 variable "link_to_vnet" {
   type        = bool
   description = "Whether or not the zone should be linked to the vnet, defaults to false"
   default     = false
-}
-
-variable "vnet_link_name" {
-  type        = string
-  description = "The name of the vnet link if one is made, defaults to null"
-  default     = null
-}
-
-variable "vnet_id" {
-  type        = string
-  description = "The vnet id the dns zones should be linked to"
-  default     = null
 }
 
 variable "location" {
@@ -31,12 +19,6 @@ variable "private_dns_zone_name" {
   type        = string
   description = "The name of the private_dns_zone"
   default     = null
-}
-
-variable "create_default_privatelink_zones" {
-  type        = bool
-  description = "Whether or not the module should create all private link zones or be ran in standalone zone mode. defaults to false"
-  default     = false
 }
 
 variable "privatelink_dns_zones" {
@@ -417,7 +399,6 @@ variable "privatelink_dns_zones" {
   ]
 }
 
-
 variable "rg_name" {
   description = "The name of the resource group, this module does not create a resource group, it is expecting the value of a resource group already exists"
   type        = string
@@ -427,6 +408,12 @@ variable "rg_name" {
   }
 }
 
+variable "soa_record" {
+  type        = any
+  description = "The SOA record block is one is used"
+  default     = null
+}
+
 variable "tags" {
   type        = map(string)
   description = "A map of the tags to use on the resources that are deployed with this module."
@@ -434,4 +421,16 @@ variable "tags" {
   default = {
     source = "terraform"
   }
+}
+
+variable "vnet_id" {
+  type        = string
+  description = "The vnet id the dns zones should be linked to"
+  default     = null
+}
+
+variable "vnet_link_name" {
+  type        = string
+  description = "The name of the vnet link if one is made, defaults to null"
+  default     = null
 }
