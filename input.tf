@@ -1,6 +1,18 @@
+variable "address_range" {
+  type        = string
+  description = "If creating a reverse DNS zone, provide this input with a full cidr range, e.g. 10.0.0.0/16, as it will be split and made if the create_reverse_dns_zone variable is set to true"
+  default     = null
+}
+
 variable "create_default_privatelink_zones" {
   type        = bool
   description = "Whether or not the module should create all private link zones or be ran in standalone zone mode. defaults to false"
+  default     = false
+}
+
+variable "create_reverse_dns_zone" {
+  type        = bool
+  description = "Whether or not to create a reverse DNS zone, defaults to false"
   default     = false
 }
 

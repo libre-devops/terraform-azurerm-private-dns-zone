@@ -49,7 +49,7 @@ module "dns" {
   source                           = "registry.terraform.io/libre-devops/private-dns-zone/azurerm"
   location                         = module.rg.rg_location
   rg_name                          = module.rg.rg_name
-  create_default_privatelink_zones = true
+  create_default_privatelink_zones = false
   link_to_vnet                     = true
   vnet_id                          = module.network.vnet_id
 }
