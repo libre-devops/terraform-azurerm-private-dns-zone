@@ -27,7 +27,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_address_range"></a> [address\_range](#input\_address\_range) | If creating a reverse DNS zone, provide this input with a full cidr range, e.g. 10.0.0.0/16, as it will be split and made if the create\_reverse\_dns\_zone variable is set to true | `string` | `null` | no |
+| <a name="input_address_range"></a> [address\_range](#input\_address\_range) | If creating a reverse DNS zone, provide this input with a full cidr range, e.g. 10.0.0.0/16, as it will be split and made if the create\_reverse\_dns\_zone variable is set to true | `list(string)` | `null` | no |
 | <a name="input_create_default_privatelink_zones"></a> [create\_default\_privatelink\_zones](#input\_create\_default\_privatelink\_zones) | Whether or not the module should create all private link zones or be ran in standalone zone mode. defaults to false | `bool` | `false` | no |
 | <a name="input_create_reverse_dns_zone"></a> [create\_reverse\_dns\_zone](#input\_create\_reverse\_dns\_zone) | Whether or not to create a reverse DNS zone, defaults to false | `bool` | `false` | no |
 | <a name="input_link_to_vnet"></a> [link\_to\_vnet](#input\_link\_to\_vnet) | Whether or not the zone should be linked to the vnet, defaults to false | `bool` | `false` | no |

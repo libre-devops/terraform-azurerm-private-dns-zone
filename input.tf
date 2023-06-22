@@ -1,5 +1,5 @@
 variable "address_range" {
-  type        = string
+  type        = list(string)
   description = "If creating a reverse DNS zone, provide this input with a full cidr range, e.g. 10.0.0.0/16, as it will be split and made if the create_reverse_dns_zone variable is set to true"
   default     = null
 }
