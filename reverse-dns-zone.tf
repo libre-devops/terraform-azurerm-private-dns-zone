@@ -20,7 +20,7 @@ resource "azurerm_private_dns_zone" "reverse_dns_zone" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "reverse_dns_zone_link" {
-  for_each              = try(var.link_to_vnet, true) == true && var.create_reverse_dns_zone == true && var.address_range != null ? toset(["true"]) : []
+  for_each              = try(var.link_to_vnet, true) == true && var.create_reverse_dns_zone == true && var.create_default_privatelink_zones ? [] : toset(["true"])
   name                  = var.vnet_link_name == null ? "pdnsz-${replace(azurerm_private_dns_zone.reverse_dns_zone[each.key].name, ".", "")}" : try(var.vnet_link_name, null)
   resource_group_name   = try(var.rg_name, null)
   private_dns_zone_name = azurerm_private_dns_zone.reverse_dns_zone[each.key].name
