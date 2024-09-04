@@ -450,6 +450,3 @@ variable "vnet_link_name" {
   description = "The name of the vnet link if one is made, defaults to null"
   default     = null
 }
-
-
-
