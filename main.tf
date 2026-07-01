@@ -1,86 +1,38 @@
-resource "azurerm_private_dns_zone" "private_dns_zone" {
-  for_each            = var.create_private_dns_zone == true ? toset(["true"]) : toset([])
-  name                = try(var.private_dns_zone_name, null)
-  resource_group_name = try(var.rg_name, null)
-  tags                = try(var.tags, null)
+# Private DNS zones from three sources, unified into one set (local.all_zone_names): zones you name
+# explicitly (forward, or reverse by name), reverse zones derived from CIDRs, and the canonical
+# Azure Private Link zone set (global, plus optional regional). Private DNS zones are global, so
+# there is no location argument.
+resource "azurerm_private_dns_zone" "this" {
+  for_each = local.all_zone_names
+
+  resource_group_name = local.rg_name
+  tags                = var.tags
+  name                = each.value
 
   dynamic "soa_record" {
-    for_each = try(var.soa_record, null) != null ? [1] : []
+    for_each = local.zone_soa[each.value] != null ? [local.zone_soa[each.value]] : []
     content {
-      email        = try(var.soa_record["email"], null)
-      expire_time  = try(var.soa_record["expire_time"], null)
-      minimum_ttl  = try(var.soa_record["minimum_ttl"], null)
-      refresh_time = try(var.soa_record["refresh_time"], null)
-      retry_time   = try(var.soa_record["retry_time"], null)
-      ttl          = try(var.soa_record["ttl"], null)
-      tags         = try(var.soa_record["tags"], var.tags, null)
+      email        = soa_record.value.email
+      expire_time  = soa_record.value.expire_time
+      minimum_ttl  = soa_record.value.minimum_ttl
+      refresh_time = soa_record.value.refresh_time
+      retry_time   = soa_record.value.retry_time
+      ttl          = soa_record.value.ttl
+      tags         = coalesce(soa_record.value.tags, var.tags)
     }
   }
 }
 
-resource "azurerm_private_dns_zone" "privatelink_dns_zones" {
-  for_each = var.create_default_privatelink_zones == true ? {
-    for idx, value in var.privatelink_dns_zones : value.zone_name => merge(value, { index = idx })
-  } : {}
-  name                = each.key
-  resource_group_name = try(var.rg_name, null)
-  tags                = try(var.tags, null)
+# Vnet links: the shared default_vnet_links applied to every zone, plus any per-zone links, flattened
+# to one resource per (zone, link).
+resource "azurerm_private_dns_zone_virtual_network_link" "this" {
+  for_each = local.vnet_links
 
-  dynamic "soa_record" {
-    for_each = try(var.soa_record, null) != null ? [1] : []
-    content {
-      email        = try(var.soa_record["email"], null)
-      expire_time  = try(var.soa_record["expire_time"], null)
-      minimum_ttl  = try(var.soa_record["minimum_ttl"], null)
-      refresh_time = try(var.soa_record["refresh_time"], null)
-      retry_time   = try(var.soa_record["retry_time"], null)
-      ttl          = try(var.soa_record["ttl"], null)
-      tags         = try(var.soa_record["tags"], var.tags, null)
-    }
-  }
+  resource_group_name   = local.rg_name
+  tags                  = coalesce(each.value.tags, var.tags)
+  name                  = each.value.link_name
+  private_dns_zone_name = azurerm_private_dns_zone.this[each.value.zone_name].name
+  virtual_network_id    = each.value.virtual_network_id
+  registration_enabled  = each.value.registration_enabled
+  resolution_policy     = each.value.resolution_policy
 }
-
-resource "azurerm_private_dns_zone_virtual_network_link" "private_dns_zone_link" {
-  for_each = try(var.link_to_vnet, true) == true && var.create_private_dns_zone == true ? toset([
-    "true"
-  ]) : toset([])
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.private_dns_zone[each.key].name, ".", "-"))}-link-to-${local.vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.private_dns_zone[each.key].name
-  virtual_network_id    = try(var.vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "private_dns_zone_link_hub" {
-  for_each = try(var.link_to_vnet, true) == true && var.create_private_dns_zone == true && var.attempt_private_dns_zone_link_to_hub == true ? toset([
-    "true"
-  ]) : toset([])
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.private_dns_zone[each.key].name, ".", "-"))}-link-to-${local.hub_vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.private_dns_zone[each.key].name
-  virtual_network_id    = try(var.hub_vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "privatelink_dns_zone_link" {
-  for_each = var.link_to_vnet == true && var.create_default_privatelink_zones == true ? {
-    for idx, value in var.privatelink_dns_zones : value.zone_name => merge(value, { index = idx })
-  } : {}
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.privatelink_dns_zones[each.key].name, ".", "-"))}-link-to-${local.vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.privatelink_dns_zones[each.key].name
-  virtual_network_id    = try(var.vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "privatelink_dns_zone_link_hub" {
-  for_each = try(var.link_to_vnet, true) == true && var.create_default_privatelink_zones == true && var.attempt_privatelink_dns_zone_link_to_hub == true ? {
-    for idx, value in var.privatelink_dns_zones : value.zone_name => merge(value, { index = idx })
-  } : {}
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.privatelink_dns_zones[each.key].name, ".", "-"))}-link-to-${local.hub_vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.privatelink_dns_zones[each.key].name
-  virtual_network_id    = try(var.hub_vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-

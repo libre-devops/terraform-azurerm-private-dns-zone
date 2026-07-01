@@ -1,100 +1,119 @@
+<!--
+  Keep the title and badges OUTSIDE the centered <div>: the Terraform Registry's markdown renderer
+  does not parse markdown inside an HTML block, so a # heading or [![badge]] in the div renders as
+  literal text on the registry. Only the logo (HTML) goes in the div.
+-->
+<div align="center">
+  <a href="https://libredevops.org">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://libredevops.org/assets/libre-devops-white.png">
+      <img alt="Libre DevOps" src="https://libredevops.org/assets/libre-devops-black.png" width="300">
+    </picture>
+  </a>
+</div>
+
+# Terraform Azure Private DNS Zone
+
+Create Azure private DNS zones (forward, reverse, and the full Azure Private Link set) and link them to vnets.
+
+[![CI](https://github.com/libre-devops/terraform-azurerm-private-dns-zone/actions/workflows/ci.yml/badge.svg)](https://github.com/libre-devops/terraform-azurerm-private-dns-zone/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/libre-devops/terraform-azurerm-private-dns-zone?sort=semver&label=release)](https://github.com/libre-devops/terraform-azurerm-private-dns-zone/releases/latest)
+[![Terraform Registry](https://img.shields.io/badge/registry-libre--devops-7B42BC?logo=terraform&logoColor=white)](https://registry.terraform.io/namespaces/libre-devops)
+[![License](https://img.shields.io/github/license/libre-devops/terraform-azurerm-private-dns-zone)](./LICENSE)
+
+---
+
+## Overview
+
+One module for every private DNS zone shape, unified into a single set and a single vnet-link pass.
+Private DNS zones are global, so the module takes only the resource group id (no location, except to
+render the regional privatelink zone names).
+
+Zones come from four sources, all optional and combined:
+
+- **Forward zones** you name in `private_dns_zones` (with an optional custom `soa_record`).
+- **Reverse zones** two ways: named directly in `private_dns_zones` (including IPv6 `ip6.arpa`), or
+  derived from IPv4 CIDRs in `reverse_dns_zone_cidrs` (`192.168.1.0/24` -> `1.168.192.in-addr.arpa`;
+  /8, /16 and /24 boundaries).
+- **The canonical Azure Private Link set** via `create_default_privatelink_zones` (60+ global zones,
+  overridable through `privatelink_dns_zones`), plus the region-specific ones (AKS, backup, file sync,
+  Kusto) via `create_regional_privatelink_zones` and `location`.
+
+Vnet linking is unified: `default_vnet_links` is applied to **every** zone the module creates (the
+usual "link all privatelink zones to the hub" case), and per-zone `vnet_links` are merged on top for
+anything bespoke (for example enabling auto-registration on one forward zone). `check` blocks warn if
+regional zones are requested without a location, or if two zones would auto-register the same vnet.
+
+Pairs with the [private-endpoint](https://github.com/libre-devops/terraform-azurerm-private-endpoint)
+module: feed `private_dns_zone_ids_zipmap` (or `private_dns_zone_ids`) into its DNS zone group.
+
+## Usage
+
 ```hcl
-resource "azurerm_private_dns_zone" "private_dns_zone" {
-  for_each            = var.create_private_dns_zone == true ? toset(["true"]) : toset([])
-  name                = try(var.private_dns_zone_name, null)
-  resource_group_name = try(var.rg_name, null)
-  tags                = try(var.tags, null)
+module "private_dns_zone" {
+  source  = "libre-devops/private-dns-zone/azurerm"
+  version = "~> 4.0"
 
-  dynamic "soa_record" {
-    for_each = try(var.soa_record, null) != null ? [1] : []
-    content {
-      email        = try(var.soa_record["email"], null)
-      expire_time  = try(var.soa_record["expire_time"], null)
-      minimum_ttl  = try(var.soa_record["minimum_ttl"], null)
-      refresh_time = try(var.soa_record["refresh_time"], null)
-      retry_time   = try(var.soa_record["retry_time"], null)
-      ttl          = try(var.soa_record["ttl"], null)
-      tags         = try(var.soa_record["tags"], var.tags, null)
-    }
+  resource_group_id = module.rg.ids["rg-dns-hub-prd-001"]
+  location          = "uksouth"
+  tags              = module.tags.tags
+
+  # Every canonical privatelink zone, all linked to the hub vnet.
+  create_default_privatelink_zones = true
+  default_vnet_links = {
+    "hub" = { virtual_network_id = module.network.vnet_id }
   }
+
+  # A forward zone and a reverse zone for the spoke range.
+  private_dns_zones      = { "internal.example.com" = {} }
+  reverse_dns_zone_cidrs = ["10.0.0.0/16"]
 }
-
-resource "azurerm_private_dns_zone" "privatelink_dns_zones" {
-  for_each = var.create_default_privatelink_zones == true ? {
-    for idx, value in var.privatelink_dns_zones : value.zone_name => merge(value, { index = idx })
-  } : {}
-  name                = each.key
-  resource_group_name = try(var.rg_name, null)
-  tags                = try(var.tags, null)
-
-  dynamic "soa_record" {
-    for_each = try(var.soa_record, null) != null ? [1] : []
-    content {
-      email        = try(var.soa_record["email"], null)
-      expire_time  = try(var.soa_record["expire_time"], null)
-      minimum_ttl  = try(var.soa_record["minimum_ttl"], null)
-      refresh_time = try(var.soa_record["refresh_time"], null)
-      retry_time   = try(var.soa_record["retry_time"], null)
-      ttl          = try(var.soa_record["ttl"], null)
-      tags         = try(var.soa_record["tags"], var.tags, null)
-    }
-  }
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "private_dns_zone_link" {
-  for_each = try(var.link_to_vnet, true) == true && var.create_private_dns_zone == true ? toset([
-    "true"
-  ]) : toset([])
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.private_dns_zone[each.key].name, ".", "-"))}-link-to-${local.vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.private_dns_zone[each.key].name
-  virtual_network_id    = try(var.vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "private_dns_zone_link_hub" {
-  for_each = try(var.link_to_vnet, true) == true && var.create_private_dns_zone == true && var.attempt_private_dns_zone_link_to_hub == true ? toset([
-    "true"
-  ]) : toset([])
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.private_dns_zone[each.key].name, ".", "-"))}-link-to-${local.hub_vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.private_dns_zone[each.key].name
-  virtual_network_id    = try(var.hub_vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "privatelink_dns_zone_link" {
-  for_each = var.link_to_vnet == true && var.create_default_privatelink_zones == true ? {
-    for idx, value in var.privatelink_dns_zones : value.zone_name => merge(value, { index = idx })
-  } : {}
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.privatelink_dns_zones[each.key].name, ".", "-"))}-link-to-${local.vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.privatelink_dns_zones[each.key].name
-  virtual_network_id    = try(var.vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "privatelink_dns_zone_link_hub" {
-  for_each = try(var.link_to_vnet, true) == true && var.create_default_privatelink_zones == true && var.attempt_privatelink_dns_zone_link_to_hub == true ? {
-    for idx, value in var.privatelink_dns_zones : value.zone_name => merge(value, { index = idx })
-  } : {}
-  name                  = var.vnet_link_name == null ? "${lower(replace(azurerm_private_dns_zone.privatelink_dns_zones[each.key].name, ".", "-"))}-link-to-${local.hub_vnet_name}" : try(var.vnet_link_name, null)
-  resource_group_name   = try(var.rg_name, null)
-  private_dns_zone_name = azurerm_private_dns_zone.privatelink_dns_zones[each.key].name
-  virtual_network_id    = try(var.hub_vnet_id, null)
-  tags                  = try(var.tags, null)
-}
-
 ```
+
+## Examples
+
+- [`examples/minimal`](./examples/minimal) - a single forward zone, no links.
+- [`examples/complete`](./examples/complete) - a forward zone with a custom SOA and registration link,
+  CIDR-derived reverse zones, the privatelink set (trimmed for speed), regional zones, and a default
+  hub link on every zone.
+
+## Developing
+
+Local work needs **PowerShell 7+** and **[`just`](https://github.com/casey/just)**, because the recipes
+wrap the [LibreDevOpsHelpers](https://www.powershellgallery.com/packages/LibreDevOpsHelpers)
+PowerShell module (the same engine the `libre-devops/terraform-azure` action runs in CI). Install
+just with `brew install just`, or `uv tool add rust-just` then `uv run just <recipe>`.
+
+Run `just` to list recipes: `just update-ldo-pwsh`, `just validate`, `just scan` (Trivy only),
+`just pwsh-analyze`, `just plan`, `just apply`, `just destroy`, `just e2e` (apply then always destroy),
+`just test`, and `just docs`. Releasing is also `just`:
+`just increment-release [patch|minor|major]` bumps, tags, and publishes a GitHub release, and the
+Terraform Registry picks up the tag.
+
+## Security scan exceptions
+
+This module is scanned with [Trivy](https://github.com/aquasecurity/trivy); HIGH and CRITICAL
+findings fail the build. There are currently **no exceptions**: private DNS zones and vnet links
+carry no security posture Trivy evaluates. Waivers, if ever needed, live in
+[`.trivyignore.yaml`](./.trivyignore.yaml) and are mirrored in a table here.
+
+## Reference
+
+The Requirements, Providers, Inputs, Outputs, and Resources below are generated by `terraform-docs`.
+
+<!-- BEGIN_TF_DOCS -->
 ## Requirements
 
-No requirements.
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9.0, < 2.0.0 |
+| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 4.0.0, < 5.0.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | n/a |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | >= 4.0.0, < 5.0.0 |
 
 ## Modules
 
@@ -104,40 +123,31 @@ No modules.
 
 | Name | Type |
 |------|------|
-| [azurerm_private_dns_zone.private_dns_zone](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone) | resource |
-| [azurerm_private_dns_zone.privatelink_dns_zones](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone) | resource |
-| [azurerm_private_dns_zone_virtual_network_link.private_dns_zone_link](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
-| [azurerm_private_dns_zone_virtual_network_link.private_dns_zone_link_hub](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
-| [azurerm_private_dns_zone_virtual_network_link.privatelink_dns_zone_link](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
-| [azurerm_private_dns_zone_virtual_network_link.privatelink_dns_zone_link_hub](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
+| [azurerm_private_dns_zone.this](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone) | resource |
+| [azurerm_private_dns_zone_virtual_network_link.this](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_attempt_private_dns_zone_link_to_hub"></a> [attempt\_private\_dns\_zone\_link\_to\_hub](#input\_attempt\_private\_dns\_zone\_link\_to\_hub) | Whether the DNS zone being made should be linked to the hub | `bool` | `false` | no |
-| <a name="input_attempt_privatelink_dns_zone_link_to_hub"></a> [attempt\_privatelink\_dns\_zone\_link\_to\_hub](#input\_attempt\_privatelink\_dns\_zone\_link\_to\_hub) | Whether the DNS zone being made should be linked to the hub | `bool` | `false` | no |
-| <a name="input_create_default_privatelink_zones"></a> [create\_default\_privatelink\_zones](#input\_create\_default\_privatelink\_zones) | Whether or not the module should create all private link zones or be ran in standalone zone mode. defaults to false | `bool` | `false` | no |
-| <a name="input_create_private_dns_zone"></a> [create\_private\_dns\_zone](#input\_create\_private\_dns\_zone) | Whether or not to create a private DNS zone, defaults to false | `bool` | `false` | no |
-| <a name="input_hub_vnet_id"></a> [hub\_vnet\_id](#input\_hub\_vnet\_id) | The ID of the hub vnet | `string` | `null` | no |
-| <a name="input_link_to_vnet"></a> [link\_to\_vnet](#input\_link\_to\_vnet) | Whether or not the zone should be linked to the vnet, defaults to false | `bool` | `false` | no |
-| <a name="input_location"></a> [location](#input\_location) | The location for this resource to be put in | `string` | n/a | yes |
-| <a name="input_private_dns_zone_name"></a> [private\_dns\_zone\_name](#input\_private\_dns\_zone\_name) | The name of the private\_dns\_zone | `string` | `null` | no |
-| <a name="input_privatelink_dns_zones"></a> [privatelink\_dns\_zones](#input\_privatelink\_dns\_zones) | A set of objects which lists a MAJORITY of privatelink zones, to be used inside the module.  Please ensure you check for the latest DNS zones here before using this and expecting the result: https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns | <pre>set(object({<br>    resource_type = string<br>    subresource   = string<br>    zone_name     = string<br>    forwarders    = string<br>  }))</pre> | <pre>[<br>  {<br>    "forwarders": "azure-automation.net",<br>    "resource_type": "Microsoft.Automation/automationAccounts",<br>    "subresource": "Webhook, DSCAndHybridWorker",<br>    "zone_name": "privatelink.azure-automation.net"<br>  },<br>  {<br>    "forwarders": "database.windows.net",<br>    "resource_type": "Microsoft.Sql/servers",<br>    "subresource": "sqlServer",<br>    "zone_name": "privatelink.database.windows.net"<br>  },<br>  {<br>    "forwarders": "database.windows.net",<br>    "resource_type": "Microsoft.Sql/managedInstances",<br>    "subresource": "",<br>    "zone_name": "privatelink.sql.database.windows.net"<br>  },<br>  {<br>    "forwarders": "sql.azuresynapse.net",<br>    "resource_type": "Microsoft.Synapse/workspaces",<br>    "subresource": "Sql",<br>    "zone_name": "privatelink.sql.azuresynapse.net"<br>  },<br>  {<br>    "forwarders": "dev.azuresynapse.net",<br>    "resource_type": "Microsoft.Synapse/workspaces",<br>    "subresource": "Dev",<br>    "zone_name": "privatelink.dev.azuresynapse.net"<br>  },<br>  {<br>    "forwarders": "azuresynapse.net",<br>    "resource_type": "Microsoft.Synapse/privateLinkHubs",<br>    "subresource": "Web",<br>    "zone_name": "privatelink.azuresynapse.net"<br>  },<br>  {<br>    "forwarders": "blob.core.windows.net",<br>    "resource_type": "Microsoft.Storage/storageAccounts",<br>    "subresource": "Blob",<br>    "zone_name": "privatelink.blob.core.windows.net"<br>  },<br>  {<br>    "forwarders": "table.core.windows.net",<br>    "resource_type": "Microsoft.Storage/storageAccounts",<br>    "subresource": "Table",<br>    "zone_name": "privatelink.table.core.windows.net"<br>  },<br>  {<br>    "forwarders": "queue.core.windows.net",<br>    "resource_type": "Microsoft.Storage/storageAccounts",<br>    "subresource": "Queue",<br>    "zone_name": "privatelink.queue.core.windows.net"<br>  },<br>  {<br>    "forwarders": "file.core.windows.net",<br>    "resource_type": "Microsoft.Storage/storageAccounts",<br>    "subresource": "File",<br>    "zone_name": "privatelink.file.core.windows.net"<br>  },<br>  {<br>    "forwarders": "web.core.windows.net",<br>    "resource_type": "Microsoft.Storage/storageAccounts",<br>    "subresource": "Web",<br>    "zone_name": "privatelink.web.core.windows.net"<br>  },<br>  {<br>    "forwarders": "dfs.core.windows.net",<br>    "resource_type": "Microsoft.Storage/storageAccounts",<br>    "subresource": "Data Lake File System Gen2",<br>    "zone_name": "privatelink.dfs.core.windows.net"<br>  },<br>  {<br>    "forwarders": "documents.azure.com",<br>    "resource_type": "Microsoft.DocumentDb/databaseAccounts",<br>    "subresource": "Sql",<br>    "zone_name": "privatelink.documents.azure.com"<br>  },<br>  {<br>    "forwarders": "mongo.cosmos.azure.com",<br>    "resource_type": "Microsoft.DocumentDb/databaseAccounts",<br>    "subresource": "MongoDB",<br>    "zone_name": "privatelink.mongo.cosmos.azure.com"<br>  },<br>  {<br>    "forwarders": "cassandra.cosmos.azure.com",<br>    "resource_type": "Microsoft.DocumentDb/databaseAccounts",<br>    "subresource": "Cassandra",<br>    "zone_name": "privatelink.cassandra.cosmos.azure.com"<br>  },<br>  {<br>    "forwarders": "gremlin.cosmos.azure.com",<br>    "resource_type": "Microsoft.DocumentDb/databaseAccounts",<br>    "subresource": "Gremlin",<br>    "zone_name": "privatelink.gremlin.cosmos.azure.com"<br>  },<br>  {<br>    "forwarders": "table.cosmos.azure.com",<br>    "resource_type": "Microsoft.DocumentDb/databaseAccounts",<br>    "subresource": "Table",<br>    "zone_name": "privatelink.table.cosmos.azure.com"<br>  },<br>  {<br>    "forwarders": "uksouth.batch.azure.com",<br>    "resource_type": "Microsoft.Batch/batchAccounts",<br>    "subresource": "batchAccount",<br>    "zone_name": "privatelink.batch.azure.com"<br>  },<br>  {<br>    "forwarders": "postgres.database.azure.com",<br>    "resource_type": "Microsoft.DBforPostgreSQL/servers",<br>    "subresource": "postgresqlServer",<br>    "zone_name": "privatelink.postgres.database.azure.com"<br>  },<br>  {<br>    "forwarders": "mysql.database.azure.com",<br>    "resource_type": "Microsoft.DBforMySQL/servers",<br>    "subresource": "mysqlServer",<br>    "zone_name": "privatelink.mysql.database.azure.com"<br>  },<br>  {<br>    "forwarders": "mariadb.database.azure.com",<br>    "resource_type": "Microsoft.DBforMariaDB/servers",<br>    "subresource": "mariadbServer",<br>    "zone_name": "privatelink.mariadb.database.azure.com"<br>  },<br>  {<br>    "forwarders": "vault.azure.net",<br>    "resource_type": "Microsoft.KeyVault/vaults",<br>    "subresource": "vault",<br>    "zone_name": "privatelink.vaultcore.azure.net"<br>  },<br>  {<br>    "forwarders": "managedhsm.azure.net",<br>    "resource_type": "Microsoft.KeyVault/managedHSMs",<br>    "subresource": "Managed HSMs",<br>    "zone_name": "privatelink.managedhsm.azure.net"<br>  },<br>  {<br>    "forwarders": "uksouth.azmk8s.io",<br>    "resource_type": "Microsoft.ContainerService/managedClusters",<br>    "subresource": "management",<br>    "zone_name": "privatelink.uksouth.azmk8s.io"<br>  },<br>  {<br>    "forwarders": "search.windows.net",<br>    "resource_type": "Microsoft.Search/searchServices",<br>    "subresource": "searchService",<br>    "zone_name": "privatelink.search.windows.net"<br>  },<br>  {<br>    "forwarders": "azurecr.io",<br>    "resource_type": "Microsoft.ContainerRegistry/registries",<br>    "subresource": "registry",<br>    "zone_name": "privatelink.azurecr.io"<br>  },<br>  {<br>    "forwarders": "azconfig.io",<br>    "resource_type": "Microsoft.AppConfiguration/configurationStores",<br>    "subresource": "configurationStores",<br>    "zone_name": "privatelink.azconfig.io"<br>  },<br>  {<br>    "forwarders": "uksouth.backup.windowsazure.com",<br>    "resource_type": "Microsoft.RecoveryServices/vaults",<br>    "subresource": "AzureBackup",<br>    "zone_name": "privatelink.uksouth.backup.windowsazure.com"<br>  },<br>  {<br>    "forwarders": "uksouth.siterecovery.windowsazure.com",<br>    "resource_type": "Microsoft.RecoveryServices/vaults",<br>    "subresource": "AzureSiteRecovery",<br>    "zone_name": "privatelink.siterecovery.windowsazure.com"<br>  },<br>  {<br>    "forwarders": "servicebus.windows.net",<br>    "resource_type": "Microsoft.EventHub/namespaces",<br>    "subresource": "namespace",<br>    "zone_name": "privatelink.servicebus.windows.net"<br>  },<br>  {<br>    "forwarders": "azure-devices.net",<br>    "resource_type": "Microsoft.Devices/IotHubs",<br>    "subresource": "iotHub",<br>    "zone_name": "privatelink.azure-devices.net"<br>  },<br>  {<br>    "forwarders": "azure-devices-provisioning.net",<br>    "resource_type": "Microsoft.Devices/ProvisioningServices",<br>    "subresource": "iotDps",<br>    "zone_name": "privatelink.azure-devices-provisioning.net"<br>  },<br>  {<br>    "forwarders": "eventgrid.azure.net",<br>    "resource_type": "Microsoft.EventGrid/topics",<br>    "subresource": "topic",<br>    "zone_name": "privatelink.eventgrid.azure.net"<br>  },<br>  {<br>    "forwarders": "azurewebsites.net",<br>    "resource_type": "Microsoft.Web/sites",<br>    "subresource": "sites",<br>    "zone_name": "privatelink.azurewebsites.net"<br>  },<br>  {<br>    "forwarders": "scm.azurewebsites.net",<br>    "resource_type": "Microsoft.Web/sites",<br>    "subresource": "sites",<br>    "zone_name": "scm.privatelink.azurewebsites.net"<br>  },<br>  {<br>    "forwarders": "api.azureml.ms",<br>    "resource_type": "Microsoft.MachineLearningServices/workspaces",<br>    "subresource": "amlworkspace",<br>    "zone_name": "privatelink.api.azureml.ms"<br>  },<br>  {<br>    "forwarders": "service.signalr.net",<br>    "resource_type": "Microsoft.SignalRService/SignalR",<br>    "subresource": "signalR",<br>    "zone_name": "privatelink.service.signalr.net"<br>  },<br>  {<br>    "forwarders": "monitor.azure.com",<br>    "resource_type": "Microsoft.Insights/privateLinkScopes",<br>    "subresource": "azuremonitor",<br>    "zone_name": "privatelink.monitor.azure.com"<br>  },<br>  {<br>    "forwarders": "oms.opinsights.azure.com",<br>    "resource_type": "Microsoft.Insights/privateLinkScopes",<br>    "subresource": "omsagent",<br>    "zone_name": "privatelink.oms.opinsights.azure.com"<br>  },<br>  {<br>    "forwarders": "ods.opinsights.azure.com",<br>    "resource_type": "Microsoft.Insights/privateLinkScopes",<br>    "subresource": "odsagent",<br>    "zone_name": "privatelink.ods.opinsights.azure.com"<br>  },<br>  {<br>    "forwarders": "agentsvc.azure-automation.net",<br>    "resource_type": "Microsoft.Insights/privateLinkScopes",<br>    "subresource": "agentsvc",<br>    "zone_name": "privatelink.agentsvc.azure-automation.net"<br>  },<br>  {<br>    "forwarders": "uksouth.afs.azure.net",<br>    "resource_type": "Microsoft.StorageSync/storageSyncServices",<br>    "subresource": "afs",<br>    "zone_name": "uksouth.privatelink.afs.azure.net"<br>  },<br>  {<br>    "forwarders": "datafactory.azure.net",<br>    "resource_type": "Microsoft.DataFactory/factories",<br>    "subresource": "dataFactory",<br>    "zone_name": "privatelink.datafactory.azure.net"<br>  },<br>  {<br>    "forwarders": "adf.azure.com",<br>    "resource_type": "Microsoft.DataFactory/factories",<br>    "subresource": "portal",<br>    "zone_name": "privatelink.adf.azure.com"<br>  },<br>  {<br>    "forwarders": "redis.cache.windows.net",<br>    "resource_type": "Microsoft.Cache/Redis",<br>    "subresource": "redisCache",<br>    "zone_name": "privatelink.redis.cache.windows.net"<br>  },<br>  {<br>    "forwarders": "redisenterprise.cache.azure.net",<br>    "resource_type": "Microsoft.Cache/RedisEnterprise",<br>    "subresource": "redisEnterprise",<br>    "zone_name": "privatelink.redisenterprise.cache.azure.net"<br>  },<br>  {<br>    "forwarders": "purview.azure.com",<br>    "resource_type": "Microsoft.Purview",<br>    "subresource": "account",<br>    "zone_name": "privatelink.purview.azure.com"<br>  },<br>  {<br>    "forwarders": "purview.azure.com",<br>    "resource_type": "Microsoft.Purview",<br>    "subresource": "portal",<br>    "zone_name": "privatelink.purviewstudio.azure.com"<br>  },<br>  {<br>    "forwarders": "digitaltwins.azure.net",<br>    "resource_type": "Microsoft.DigitalTwins",<br>    "subresource": "digitalTwinsInstances",<br>    "zone_name": "privatelink.digitaltwins.azure.net"<br>  },<br>  {<br>    "forwarders": "azurehdinsight.net",<br>    "resource_type": "Microsoft.HDInsight",<br>    "subresource": null,<br>    "zone_name": "privatelink.azurehdinsight.net"<br>  },<br>  {<br>    "forwarders": "his.arc.azure.com",<br>    "resource_type": "Microsoft.HybridCompute",<br>    "subresource": "hybridcompute",<br>    "zone_name": "privatelink.his.arc.azure.com"<br>  },<br>  {<br>    "forwarders": "media.azure.net",<br>    "resource_type": "Microsoft.Media",<br>    "subresource": "keydelivery",<br>    "zone_name": "privatelink.media.azure.net"<br>  },<br>  {<br>    "forwarders": "uksouth.kusto.windows.net",<br>    "resource_type": "Microsoft.Kusto",<br>    "subresource": "",<br>    "zone_name": "privatelink.uksouth.kusto.windows.net"<br>  },<br>  {<br>    "forwarders": "azurestaticapps.net",<br>    "resource_type": "Microsoft.Web/staticSites",<br>    "subresource": "staticSites",<br>    "zone_name": "privatelink.azurestaticapps.net"<br>  },<br>  {<br>    "forwarders": "prod.migration.windowsazure.com",<br>    "resource_type": "Microsoft.Migrate",<br>    "subresource": "",<br>    "zone_name": "privatelink.prod.migration.windowsazure.com"<br>  },<br>  {<br>    "forwarders": "azure-api.net",<br>    "resource_type": "Microsoft.ApiManagement/service",<br>    "subresource": "gateway",<br>    "zone_name": "privatelink.azure-api.net"<br>  },<br>  {<br>    "forwarders": "analysis.windows.net",<br>    "resource_type": "Microsoft.PowerBI/privateLinkServicesForPowerBI",<br>    "subresource": "",<br>    "zone_name": "privatelink.analysis.windows.net"<br>  },<br>  {<br>    "forwarders": "europe.directline.botframework.com",<br>    "resource_type": "Microsoft.BotService/botServices",<br>    "subresource": "Bot",<br>    "zone_name": "privatelink.directline.botframework.com"<br>  },<br>  {<br>    "forwarders": "europe.token.botframework.com",<br>    "resource_type": "Microsoft.BotService/botServices",<br>    "subresource": "Token",<br>    "zone_name": "privatelink.token.botframework.com"<br>  },<br>  {<br>    "forwarders": "workspace.azurehealthcareapis.com",<br>    "resource_type": "Microsoft.HealthcareApis/workspaces",<br>    "subresource": "healthcareworkspace",<br>    "zone_name": "privatelink.workspace.azurehealthcareapis.com"<br>  },<br>  {<br>    "forwarders": "",<br>    "resource_type": "Microsoft.Databricks/workspaces",<br>    "subresource": "databricks_ui_api, browser_authentication",<br>    "zone_name": "privatelink.azuredatabricks.net"<br>  }<br>]</pre> | no |
-| <a name="input_rg_name"></a> [rg\_name](#input\_rg\_name) | The name of the resource group, this module does not create a resource group, it is expecting the value of a resource group already exists | `string` | n/a | yes |
-| <a name="input_soa_record"></a> [soa\_record](#input\_soa\_record) | The SOA record block is one is used | `any` | `null` | no |
-| <a name="input_tags"></a> [tags](#input\_tags) | A map of the tags to use on the resources that are deployed with this module. | `map(string)` | n/a | yes |
-| <a name="input_vnet_id"></a> [vnet\_id](#input\_vnet\_id) | The vnet id the dns zones should be linked to | `string` | `null` | no |
-| <a name="input_vnet_link_name"></a> [vnet\_link\_name](#input\_vnet\_link\_name) | The name of the vnet link if one is made, defaults to null | `string` | `null` | no |
+| <a name="input_create_default_privatelink_zones"></a> [create\_default\_privatelink\_zones](#input\_create\_default\_privatelink\_zones) | Create the full canonical set of global Azure Private Link DNS zones (privatelink\_dns\_zones). Off by default. | `bool` | `false` | no |
+| <a name="input_create_regional_privatelink_zones"></a> [create\_regional\_privatelink\_zones](#input\_create\_regional\_privatelink\_zones) | Create the region-specific privatelink zones (AKS, backup, file sync, Kusto). Requires location. Off by default. | `bool` | `false` | no |
+| <a name="input_default_vnet_links"></a> [default\_vnet\_links](#input\_default\_vnet\_links) | Vnet links added to every zone this module creates, keyed by link name. Merged with any per-zone vnet\_links. | <pre>map(object({<br/>    virtual_network_id   = string<br/>    registration_enabled = optional(bool, false)<br/>    resolution_policy    = optional(string)<br/>    tags                 = optional(map(string))<br/>  }))</pre> | `{}` | no |
+| <a name="input_location"></a> [location](#input\_location) | Azure region used only to render the regional privatelink zone names (for example uksouth in privatelink.uksouth.azmk8s.io). Required when create\_regional\_privatelink\_zones is true; otherwise ignored. | `string` | `null` | no |
+| <a name="input_private_dns_zones"></a> [private\_dns\_zones](#input\_private\_dns\_zones) | Map of private DNS zones to create, keyed by zone name (for example "internal.example.com" or "1.168.192.in-addr.arpa"). | <pre>map(object({<br/>    soa_record = optional(object({<br/>      email        = string<br/>      expire_time  = optional(number)<br/>      minimum_ttl  = optional(number)<br/>      refresh_time = optional(number)<br/>      retry_time   = optional(number)<br/>      ttl          = optional(number)<br/>      tags         = optional(map(string))<br/>    }))<br/>    vnet_links = optional(map(object({<br/>      virtual_network_id   = string<br/>      registration_enabled = optional(bool, false)<br/>      resolution_policy    = optional(string)<br/>      tags                 = optional(map(string))<br/>    })), {})<br/>  }))</pre> | `{}` | no |
+| <a name="input_privatelink_dns_zones"></a> [privatelink\_dns\_zones](#input\_privatelink\_dns\_zones) | The set of global Azure Private Link zone names created when create\_default\_privatelink\_zones is true. Defaults to the canonical global set; override to trim or extend it. | `set(string)` | <pre>[<br/>  "privatelink.azure-automation.net",<br/>  "privatelink.agentsvc.azure-automation.net",<br/>  "privatelink.database.windows.net",<br/>  "privatelink.sql.database.windows.net",<br/>  "privatelink.sql.azuresynapse.net",<br/>  "privatelink.dev.azuresynapse.net",<br/>  "privatelink.azuresynapse.net",<br/>  "privatelink.blob.core.windows.net",<br/>  "privatelink.table.core.windows.net",<br/>  "privatelink.queue.core.windows.net",<br/>  "privatelink.file.core.windows.net",<br/>  "privatelink.web.core.windows.net",<br/>  "privatelink.dfs.core.windows.net",<br/>  "privatelink.documents.azure.com",<br/>  "privatelink.mongo.cosmos.azure.com",<br/>  "privatelink.cassandra.cosmos.azure.com",<br/>  "privatelink.gremlin.cosmos.azure.com",<br/>  "privatelink.table.cosmos.azure.com",<br/>  "privatelink.postgres.database.azure.com",<br/>  "privatelink.mysql.database.azure.com",<br/>  "privatelink.mariadb.database.azure.com",<br/>  "privatelink.vaultcore.azure.net",<br/>  "privatelink.managedhsm.azure.net",<br/>  "privatelink.batch.azure.com",<br/>  "privatelink.search.windows.net",<br/>  "privatelink.azurecr.io",<br/>  "privatelink.azconfig.io",<br/>  "privatelink.siterecovery.windowsazure.com",<br/>  "privatelink.servicebus.windows.net",<br/>  "privatelink.azure-devices.net",<br/>  "privatelink.azure-devices-provisioning.net",<br/>  "privatelink.eventgrid.azure.net",<br/>  "privatelink.azurewebsites.net",<br/>  "scm.privatelink.azurewebsites.net",<br/>  "privatelink.api.azureml.ms",<br/>  "privatelink.notebooks.azure.net",<br/>  "privatelink.service.signalr.net",<br/>  "privatelink.monitor.azure.com",<br/>  "privatelink.oms.opinsights.azure.com",<br/>  "privatelink.ods.opinsights.azure.com",<br/>  "privatelink.datafactory.azure.net",<br/>  "privatelink.adf.azure.com",<br/>  "privatelink.redis.cache.windows.net",<br/>  "privatelink.redisenterprise.cache.azure.net",<br/>  "privatelink.purview.azure.com",<br/>  "privatelink.purviewstudio.azure.com",<br/>  "privatelink.digitaltwins.azure.net",<br/>  "privatelink.azurehdinsight.net",<br/>  "privatelink.his.arc.azure.com",<br/>  "privatelink.guestconfiguration.azure.com",<br/>  "privatelink.media.azure.net",<br/>  "privatelink.azurestaticapps.net",<br/>  "privatelink.prod.migration.windowsazure.com",<br/>  "privatelink.azure-api.net",<br/>  "privatelink.analysis.windows.net",<br/>  "privatelink.pbidedicated.windows.net",<br/>  "privatelink.tip1.powerquery.microsoft.com",<br/>  "privatelink.directline.botframework.com",<br/>  "privatelink.token.botframework.com",<br/>  "privatelink.workspace.azurehealthcareapis.com",<br/>  "privatelink.azuredatabricks.net",<br/>  "privatelink.cognitiveservices.azure.com",<br/>  "privatelink.openai.azure.com",<br/>  "privatelink.blob.storage.azure.net"<br/>]</pre> | no |
+| <a name="input_resource_group_id"></a> [resource\_group\_id](#input\_resource\_group\_id) | The id of the resource group the zones are created in. The name is parsed from it; private DNS zones are global, so no location is needed. | `string` | n/a | yes |
+| <a name="input_reverse_dns_zone_cidrs"></a> [reverse\_dns\_zone\_cidrs](#input\_reverse\_dns\_zone\_cidrs) | Set of IPv4 CIDRs (/8, /16 or /24) to create in-addr.arpa reverse zones for. For example "192.168.1.0/24" creates "1.168.192.in-addr.arpa". | `set(string)` | `[]` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to every zone and vnet link created by the module. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| <a name="output_dns_number_of_record_sets"></a> [dns\_number\_of\_record\_sets](#output\_dns\_number\_of\_record\_sets) | The max number of virtual network links with registration |
-| <a name="output_dns_zone_id"></a> [dns\_zone\_id](#output\_dns\_zone\_id) | The dns zone ids |
-| <a name="output_dns_zone_max_number_of_record_sets"></a> [dns\_zone\_max\_number\_of\_record\_sets](#output\_dns\_zone\_max\_number\_of\_record\_sets) | The max number of record sets |
-| <a name="output_dns_zone_max_number_of_virtual_network_links"></a> [dns\_zone\_max\_number\_of\_virtual\_network\_links](#output\_dns\_zone\_max\_number\_of\_virtual\_network\_links) | The dns max number of virtual network links |
-| <a name="output_dns_zone_max_number_of_virtual_network_links_with_registration"></a> [dns\_zone\_max\_number\_of\_virtual\_network\_links\_with\_registration](#output\_dns\_zone\_max\_number\_of\_virtual\_network\_links\_with\_registration) | The max number of virtual network links with registration |
-| <a name="output_dns_zone_name"></a> [dns\_zone\_name](#output\_dns\_zone\_name) | The dns zone name |
-| <a name="output_vnet_link_id"></a> [vnet\_link\_id](#output\_vnet\_link\_id) | The vnet link ids |
+| <a name="output_private_dns_zone_ids"></a> [private\_dns\_zone\_ids](#output\_private\_dns\_zone\_ids) | Map of zone name to zone id. |
+| <a name="output_private_dns_zone_ids_zipmap"></a> [private\_dns\_zone\_ids\_zipmap](#output\_private\_dns\_zone\_ids\_zipmap) | Map of zone name to { name, id }, for easy composition with the private-endpoint module. |
+| <a name="output_private_dns_zone_names"></a> [private\_dns\_zone\_names](#output\_private\_dns\_zone\_names) | The names of the zones created. |
+| <a name="output_private_dns_zones"></a> [private\_dns\_zones](#output\_private\_dns\_zones) | The full azurerm\_private\_dns\_zone resources, keyed by zone name. |
+| <a name="output_vnet_link_ids"></a> [vnet\_link\_ids](#output\_vnet\_link\_ids) | Map of "<zone>\|<link>" to vnet link id. |
+| <a name="output_vnet_links"></a> [vnet\_links](#output\_vnet\_links) | The full azurerm\_private\_dns\_zone\_virtual\_network\_link resources, keyed by "<zone>\|<link>". |
+<!-- END_TF_DOCS -->

@@ -1,452 +1,158 @@
-variable "attempt_private_dns_zone_link_to_hub" {
-  type        = bool
-  description = "Whether the DNS zone being made should be linked to the hub"
-  default     = false
-}
-
-variable "attempt_privatelink_dns_zone_link_to_hub" {
-  type        = bool
-  description = "Whether the DNS zone being made should be linked to the hub"
-  default     = false
-}
-
 variable "create_default_privatelink_zones" {
+  description = "Create the full canonical set of global Azure Private Link DNS zones (privatelink_dns_zones). Off by default."
   type        = bool
-  description = "Whether or not the module should create all private link zones or be ran in standalone zone mode. defaults to false"
   default     = false
 }
 
-variable "create_private_dns_zone" {
+variable "create_regional_privatelink_zones" {
+  description = "Create the region-specific privatelink zones (AKS, backup, file sync, Kusto). Requires location. Off by default."
   type        = bool
-  description = "Whether or not to create a private DNS zone, defaults to false"
   default     = false
 }
 
-variable "hub_vnet_id" {
-  type        = string
-  description = "The ID of the hub vnet"
-  default     = null
-}
-
-variable "link_to_vnet" {
-  type        = bool
-  description = "Whether or not the zone should be linked to the vnet, defaults to false"
-  default     = false
+# Vnet links applied to every zone the module creates. The common case is linking all zones to the
+# hub vnet; per-zone vnet_links (in private_dns_zones) are merged on top of these.
+variable "default_vnet_links" {
+  description = "Vnet links added to every zone this module creates, keyed by link name. Merged with any per-zone vnet_links."
+  type = map(object({
+    virtual_network_id   = string
+    registration_enabled = optional(bool, false)
+    resolution_policy    = optional(string)
+    tags                 = optional(map(string))
+  }))
+  default = {}
 }
 
 variable "location" {
-  description = "The location for this resource to be put in"
+  description = "Azure region used only to render the regional privatelink zone names (for example uksouth in privatelink.uksouth.azmk8s.io). Required when create_regional_privatelink_zones is true; otherwise ignored."
   type        = string
+  default     = null
 }
 
-variable "private_dns_zone_name" {
-  type        = string
-  description = "The name of the private_dns_zone"
-  default     = null
+# Forward zones, and any reverse zones you prefer to name explicitly (for example IPv6 ip6.arpa).
+# Keyed by the full zone name. Reverse zones can also be derived from CIDRs, see reverse_dns_zone_cidrs.
+variable "private_dns_zones" {
+  description = "Map of private DNS zones to create, keyed by zone name (for example \"internal.example.com\" or \"1.168.192.in-addr.arpa\")."
+  type = map(object({
+    soa_record = optional(object({
+      email        = string
+      expire_time  = optional(number)
+      minimum_ttl  = optional(number)
+      refresh_time = optional(number)
+      retry_time   = optional(number)
+      ttl          = optional(number)
+      tags         = optional(map(string))
+    }))
+    vnet_links = optional(map(object({
+      virtual_network_id   = string
+      registration_enabled = optional(bool, false)
+      resolution_policy    = optional(string)
+      tags                 = optional(map(string))
+    })), {})
+  }))
+  default = {}
 }
 
 variable "privatelink_dns_zones" {
-  type = set(object({
-    resource_type = string
-    subresource   = string
-    zone_name     = string
-    forwarders    = string
-  }))
-  description = "A set of objects which lists a MAJORITY of privatelink zones, to be used inside the module.  Please ensure you check for the latest DNS zones here before using this and expecting the result: https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns"
+  description = "The set of global Azure Private Link zone names created when create_default_privatelink_zones is true. Defaults to the canonical global set; override to trim or extend it."
+  type        = set(string)
   default = [
-    {
-      resource_type = "Microsoft.Automation/automationAccounts"
-      subresource   = "Webhook, DSCAndHybridWorker"
-      zone_name     = "privatelink.azure-automation.net"
-      forwarders    = "azure-automation.net"
-    },
-    {
-      resource_type = "Microsoft.Sql/servers"
-      subresource   = "sqlServer"
-      zone_name     = "privatelink.database.windows.net"
-      forwarders    = "database.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Sql/managedInstances"
-      subresource   = ""
-      zone_name     = "privatelink.sql.database.windows.net"
-      forwarders    = "database.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Synapse/workspaces"
-      subresource   = "Sql"
-      zone_name     = "privatelink.sql.azuresynapse.net"
-      forwarders    = "sql.azuresynapse.net"
-    },
-    {
-      resource_type = "Microsoft.Synapse/workspaces"
-      subresource   = "Dev"
-      zone_name     = "privatelink.dev.azuresynapse.net"
-      forwarders    = "dev.azuresynapse.net"
-    },
-    {
-      resource_type = "Microsoft.Synapse/privateLinkHubs"
-      subresource   = "Web"
-      zone_name     = "privatelink.azuresynapse.net"
-      forwarders    = "azuresynapse.net"
-    },
-    {
-      resource_type = "Microsoft.Storage/storageAccounts"
-      subresource   = "Blob"
-      zone_name     = "privatelink.blob.core.windows.net"
-      forwarders    = "blob.core.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Storage/storageAccounts"
-      subresource   = "Table"
-      zone_name     = "privatelink.table.core.windows.net"
-      forwarders    = "table.core.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Storage/storageAccounts"
-      subresource   = "Queue"
-      zone_name     = "privatelink.queue.core.windows.net"
-      forwarders    = "queue.core.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Storage/storageAccounts"
-      subresource   = "File"
-      zone_name     = "privatelink.file.core.windows.net"
-      forwarders    = "file.core.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Storage/storageAccounts"
-      subresource   = "Web"
-      zone_name     = "privatelink.web.core.windows.net"
-      forwarders    = "web.core.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Storage/storageAccounts"
-      subresource   = "Data Lake File System Gen2"
-      zone_name     = "privatelink.dfs.core.windows.net"
-      forwarders    = "dfs.core.windows.net"
-    },
-    {
-      resource_type = "Microsoft.DocumentDb/databaseAccounts"
-      subresource   = "Sql"
-      zone_name     = "privatelink.documents.azure.com"
-      forwarders    = "documents.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DocumentDb/databaseAccounts"
-      subresource   = "MongoDB"
-      zone_name     = "privatelink.mongo.cosmos.azure.com"
-      forwarders    = "mongo.cosmos.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DocumentDb/databaseAccounts"
-      subresource   = "Cassandra"
-      zone_name     = "privatelink.cassandra.cosmos.azure.com"
-      forwarders    = "cassandra.cosmos.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DocumentDb/databaseAccounts"
-      subresource   = "Gremlin"
-      zone_name     = "privatelink.gremlin.cosmos.azure.com"
-      forwarders    = "gremlin.cosmos.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DocumentDb/databaseAccounts"
-      subresource   = "Table"
-      zone_name     = "privatelink.table.cosmos.azure.com"
-      forwarders    = "table.cosmos.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Batch/batchAccounts"
-      subresource   = "batchAccount"
-      zone_name     = "privatelink.batch.azure.com"
-      forwarders    = "uksouth.batch.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DBforPostgreSQL/servers"
-      subresource   = "postgresqlServer"
-      zone_name     = "privatelink.postgres.database.azure.com"
-      forwarders    = "postgres.database.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DBforMySQL/servers"
-      subresource   = "mysqlServer"
-      zone_name     = "privatelink.mysql.database.azure.com"
-      forwarders    = "mysql.database.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DBforMariaDB/servers"
-      subresource   = "mariadbServer"
-      zone_name     = "privatelink.mariadb.database.azure.com"
-      forwarders    = "mariadb.database.azure.com"
-    },
-    {
-      resource_type = "Microsoft.KeyVault/vaults"
-      subresource   = "vault"
-      zone_name     = "privatelink.vaultcore.azure.net"
-      forwarders    = "vault.azure.net"
-    },
-    {
-      resource_type = "Microsoft.KeyVault/managedHSMs"
-      subresource   = "Managed HSMs"
-      zone_name     = "privatelink.managedhsm.azure.net"
-      forwarders    = "managedhsm.azure.net"
-    },
-    {
-      resource_type = "Microsoft.ContainerService/managedClusters"
-      subresource   = "management"
-      zone_name     = "privatelink.uksouth.azmk8s.io"
-      forwarders    = "uksouth.azmk8s.io"
-    },
-    {
-      resource_type = "Microsoft.Search/searchServices"
-      subresource   = "searchService"
-      zone_name     = "privatelink.search.windows.net"
-      forwarders    = "search.windows.net"
-    },
-    {
-      resource_type = "Microsoft.ContainerRegistry/registries"
-      subresource   = "registry"
-      zone_name     = "privatelink.azurecr.io"
-      forwarders    = "azurecr.io"
-    },
-    {
-      resource_type = "Microsoft.AppConfiguration/configurationStores"
-      subresource   = "configurationStores"
-      zone_name     = "privatelink.azconfig.io"
-      forwarders    = "azconfig.io"
-    },
-    {
-      resource_type = "Microsoft.RecoveryServices/vaults"
-      subresource   = "AzureBackup"
-      zone_name     = "privatelink.uksouth.backup.windowsazure.com"
-      forwarders    = "uksouth.backup.windowsazure.com"
-    },
-    {
-      resource_type = "Microsoft.RecoveryServices/vaults"
-      subresource   = "AzureSiteRecovery"
-      zone_name     = "privatelink.siterecovery.windowsazure.com"
-      forwarders    = "uksouth.siterecovery.windowsazure.com"
-    },
-    {
-      resource_type = "Microsoft.EventHub/namespaces"
-      subresource   = "namespace"
-      zone_name     = "privatelink.servicebus.windows.net"
-      forwarders    = "servicebus.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Devices/IotHubs"
-      subresource   = "iotHub"
-      zone_name     = "privatelink.azure-devices.net"
-      forwarders    = "azure-devices.net"
-    },
-    {
-      resource_type = "Microsoft.Devices/ProvisioningServices"
-      subresource   = "iotDps"
-      zone_name     = "privatelink.azure-devices-provisioning.net"
-      forwarders    = "azure-devices-provisioning.net"
-    },
-    {
-      resource_type = "Microsoft.EventGrid/topics"
-      subresource   = "topic"
-      zone_name     = "privatelink.eventgrid.azure.net"
-      forwarders    = "eventgrid.azure.net"
-    },
-    {
-      resource_type = "Microsoft.Web/sites"
-      subresource   = "sites"
-      zone_name     = "privatelink.azurewebsites.net"
-      forwarders    = "azurewebsites.net"
-    },
-    {
-      resource_type = "Microsoft.Web/sites"
-      subresource   = "sites"
-      zone_name     = "scm.privatelink.azurewebsites.net"
-      forwarders    = "scm.azurewebsites.net"
-    },
-    {
-      resource_type = "Microsoft.MachineLearningServices/workspaces"
-      subresource   = "amlworkspace"
-      zone_name     = "privatelink.api.azureml.ms"
-      forwarders    = "api.azureml.ms"
-    },
-    {
-      resource_type = "Microsoft.SignalRService/SignalR"
-      subresource   = "signalR"
-      zone_name     = "privatelink.service.signalr.net"
-      forwarders    = "service.signalr.net"
-    },
-    {
-      resource_type = "Microsoft.Insights/privateLinkScopes"
-      subresource   = "azuremonitor"
-      zone_name     = "privatelink.monitor.azure.com"
-      forwarders    = "monitor.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Insights/privateLinkScopes"
-      subresource   = "omsagent"
-      zone_name     = "privatelink.oms.opinsights.azure.com"
-      forwarders    = "oms.opinsights.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Insights/privateLinkScopes"
-      subresource   = "odsagent"
-      zone_name     = "privatelink.ods.opinsights.azure.com"
-      forwarders    = "ods.opinsights.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Insights/privateLinkScopes"
-      subresource   = "agentsvc"
-      zone_name     = "privatelink.agentsvc.azure-automation.net"
-      forwarders    = "agentsvc.azure-automation.net"
-    },
-    {
-      resource_type = "Microsoft.StorageSync/storageSyncServices"
-      subresource   = "afs"
-      zone_name     = "uksouth.privatelink.afs.azure.net"
-      forwarders    = "uksouth.afs.azure.net"
-    },
-    {
-      resource_type = "Microsoft.DataFactory/factories"
-      subresource   = "dataFactory"
-      zone_name     = "privatelink.datafactory.azure.net"
-      forwarders    = "datafactory.azure.net"
-    },
-    {
-      resource_type = "Microsoft.DataFactory/factories"
-      subresource   = "portal"
-      zone_name     = "privatelink.adf.azure.com"
-      forwarders    = "adf.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Cache/Redis"
-      subresource   = "redisCache"
-      zone_name     = "privatelink.redis.cache.windows.net"
-      forwarders    = "redis.cache.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Cache/RedisEnterprise"
-      subresource   = "redisEnterprise"
-      zone_name     = "privatelink.redisenterprise.cache.azure.net"
-      forwarders    = "redisenterprise.cache.azure.net"
-    },
-    {
-      resource_type = "Microsoft.Purview"
-      subresource   = "account"
-      zone_name     = "privatelink.purview.azure.com"
-      forwarders    = "purview.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Purview"
-      subresource   = "portal"
-      zone_name     = "privatelink.purviewstudio.azure.com"
-      forwarders    = "purview.azure.com"
-    },
-    {
-      resource_type = "Microsoft.DigitalTwins"
-      subresource   = "digitalTwinsInstances"
-      zone_name     = "privatelink.digitaltwins.azure.net"
-      forwarders    = "digitaltwins.azure.net"
-    },
-    {
-      resource_type = "Microsoft.HDInsight"
-      subresource   = null
-      zone_name     = "privatelink.azurehdinsight.net"
-      forwarders    = "azurehdinsight.net"
-    },
-    {
-      resource_type = "Microsoft.HybridCompute"
-      subresource   = "hybridcompute"
-      zone_name     = "privatelink.his.arc.azure.com"
-      forwarders    = "his.arc.azure.com"
-    },
-    {
-      resource_type = "Microsoft.Media"
-      subresource   = "keydelivery"
-      zone_name     = "privatelink.media.azure.net"
-      forwarders    = "media.azure.net"
-    },
-    {
-      resource_type = "Microsoft.Kusto"
-      subresource   = ""
-      zone_name     = "privatelink.uksouth.kusto.windows.net"
-      forwarders    = "uksouth.kusto.windows.net"
-    },
-    {
-      resource_type = "Microsoft.Web/staticSites"
-      subresource   = "staticSites"
-      zone_name     = "privatelink.azurestaticapps.net"
-      forwarders    = "azurestaticapps.net"
-    },
-    {
-      resource_type = "Microsoft.Migrate"
-      subresource   = ""
-      zone_name     = "privatelink.prod.migration.windowsazure.com"
-      forwarders    = "prod.migration.windowsazure.com"
-    },
-    {
-      resource_type = "Microsoft.ApiManagement/service"
-      subresource   = "gateway"
-      zone_name     = "privatelink.azure-api.net"
-      forwarders    = "azure-api.net"
-    },
-    {
-      resource_type = "Microsoft.PowerBI/privateLinkServicesForPowerBI"
-      subresource   = ""
-      zone_name     = "privatelink.analysis.windows.net"
-      forwarders    = "analysis.windows.net"
-    },
-    {
-      resource_type = "Microsoft.BotService/botServices"
-      subresource   = "Bot"
-      zone_name     = "privatelink.directline.botframework.com"
-      forwarders    = "europe.directline.botframework.com"
-    },
-    {
-      resource_type = "Microsoft.BotService/botServices"
-      subresource   = "Token"
-      zone_name     = "privatelink.token.botframework.com"
-      forwarders    = "europe.token.botframework.com"
-    },
-    {
-      resource_type = "Microsoft.HealthcareApis/workspaces"
-      subresource   = "healthcareworkspace"
-      zone_name     = "privatelink.workspace.azurehealthcareapis.com"
-      forwarders    = "workspace.azurehealthcareapis.com"
-    },
-    {
-      resource_type = "Microsoft.Databricks/workspaces"
-      subresource   = "databricks_ui_api, browser_authentication"
-      zone_name     = "privatelink.azuredatabricks.net"
-      forwarders    = ""
-    }
+    "privatelink.azure-automation.net",
+    "privatelink.agentsvc.azure-automation.net",
+    "privatelink.database.windows.net",
+    "privatelink.sql.database.windows.net",
+    "privatelink.sql.azuresynapse.net",
+    "privatelink.dev.azuresynapse.net",
+    "privatelink.azuresynapse.net",
+    "privatelink.blob.core.windows.net",
+    "privatelink.table.core.windows.net",
+    "privatelink.queue.core.windows.net",
+    "privatelink.file.core.windows.net",
+    "privatelink.web.core.windows.net",
+    "privatelink.dfs.core.windows.net",
+    "privatelink.documents.azure.com",
+    "privatelink.mongo.cosmos.azure.com",
+    "privatelink.cassandra.cosmos.azure.com",
+    "privatelink.gremlin.cosmos.azure.com",
+    "privatelink.table.cosmos.azure.com",
+    "privatelink.postgres.database.azure.com",
+    "privatelink.mysql.database.azure.com",
+    "privatelink.mariadb.database.azure.com",
+    "privatelink.vaultcore.azure.net",
+    "privatelink.managedhsm.azure.net",
+    "privatelink.batch.azure.com",
+    "privatelink.search.windows.net",
+    "privatelink.azurecr.io",
+    "privatelink.azconfig.io",
+    "privatelink.siterecovery.windowsazure.com",
+    "privatelink.servicebus.windows.net",
+    "privatelink.azure-devices.net",
+    "privatelink.azure-devices-provisioning.net",
+    "privatelink.eventgrid.azure.net",
+    "privatelink.azurewebsites.net",
+    "scm.privatelink.azurewebsites.net",
+    "privatelink.api.azureml.ms",
+    "privatelink.notebooks.azure.net",
+    "privatelink.service.signalr.net",
+    "privatelink.monitor.azure.com",
+    "privatelink.oms.opinsights.azure.com",
+    "privatelink.ods.opinsights.azure.com",
+    "privatelink.datafactory.azure.net",
+    "privatelink.adf.azure.com",
+    "privatelink.redis.cache.windows.net",
+    "privatelink.redisenterprise.cache.azure.net",
+    "privatelink.purview.azure.com",
+    "privatelink.purviewstudio.azure.com",
+    "privatelink.digitaltwins.azure.net",
+    "privatelink.azurehdinsight.net",
+    "privatelink.his.arc.azure.com",
+    "privatelink.guestconfiguration.azure.com",
+    "privatelink.media.azure.net",
+    "privatelink.azurestaticapps.net",
+    "privatelink.prod.migration.windowsazure.com",
+    "privatelink.azure-api.net",
+    "privatelink.analysis.windows.net",
+    "privatelink.pbidedicated.windows.net",
+    "privatelink.tip1.powerquery.microsoft.com",
+    "privatelink.directline.botframework.com",
+    "privatelink.token.botframework.com",
+    "privatelink.workspace.azurehealthcareapis.com",
+    "privatelink.azuredatabricks.net",
+    "privatelink.cognitiveservices.azure.com",
+    "privatelink.openai.azure.com",
+    "privatelink.blob.storage.azure.net"
   ]
 }
 
-variable "rg_name" {
-  description = "The name of the resource group, this module does not create a resource group, it is expecting the value of a resource group already exists"
+variable "resource_group_id" {
+  description = "The id of the resource group the zones are created in. The name is parsed from it; private DNS zones are global, so no location is needed."
   type        = string
+
+  validation {
+    condition     = can(provider::azurerm::parse_resource_id(var.resource_group_id)) && lower(provider::azurerm::parse_resource_id(var.resource_group_id).resource_type) == "resourcegroups"
+    error_message = "resource_group_id must be a resource group id (…/resourceGroups/<name>)."
+  }
 }
 
-variable "soa_record" {
-  type        = any
-  description = "The SOA record block is one is used"
-  default     = null
+# IPv4 CIDRs whose in-addr.arpa reverse lookup zone should be created. Only octet-boundary prefixes
+# (/8, /16, /24) map cleanly to a single reverse zone, so those are the accepted values. IPv6 reverse
+# (ip6.arpa) zones should be passed by name in private_dns_zones.
+variable "reverse_dns_zone_cidrs" {
+  description = "Set of IPv4 CIDRs (/8, /16 or /24) to create in-addr.arpa reverse zones for. For example \"192.168.1.0/24\" creates \"1.168.192.in-addr.arpa\"."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for c in var.reverse_dns_zone_cidrs :
+      can(cidrhost(c, 0)) && !strcontains(c, ":") && contains([8, 16, 24], tonumber(split("/", c)[1]))
+    ])
+    error_message = "Each reverse_dns_zone_cidrs entry must be an IPv4 CIDR with a /8, /16 or /24 prefix."
+  }
 }
 
 variable "tags" {
+  description = "Tags applied to every zone and vnet link created by the module."
   type        = map(string)
-  description = "A map of the tags to use on the resources that are deployed with this module."
-}
-
-variable "vnet_id" {
-  type        = string
-  description = "The vnet id the dns zones should be linked to"
-  default     = null
-}
-
-variable "vnet_link_name" {
-  type        = string
-  description = "The name of the vnet link if one is made, defaults to null"
-  default     = null
+  default     = {}
 }
