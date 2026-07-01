@@ -41,14 +41,22 @@ locals {
     )
   }
 
-  # Flatten to one instance per (zone, link), keyed "<zone>|<link>". The for_each map carries only
-  # known values (zone and link names); the link config (which can hold an unknown virtual_network_id
-  # from a vnet created in the same apply) is looked up from zone_links in the resource body, so the
-  # instance keys stay known at plan time.
+  # The link names per zone, derived only from the map KEYS of the inputs. keys() is known even when
+  # the values (which can hold a virtual_network_id from a vnet created in the same apply) are not,
+  # so the instance keys below stay known at plan time. The unknown-bearing config is looked up from
+  # zone_links only in the resource body, never in for_each.
+  zone_link_names = {
+    for z in local.all_zone_names : z => toset(concat(
+      keys(var.default_vnet_links),
+      keys(try(var.private_dns_zones[z].vnet_links, {})),
+    ))
+  }
+
+  # Flatten to one instance per (zone, link), keyed "<zone>|<link>", values are known strings only.
   vnet_link_keys = {
     for item in flatten([
-      for z, links in local.zone_links : [
-        for lk, lv in links : { key = "${z}|${lk}", zone_name = z, link_name = lk }
+      for z, lks in local.zone_link_names : [
+        for lk in lks : { key = "${z}|${lk}", zone_name = z, link_name = lk }
       ]
     ]) : item.key => { zone_name = item.zone_name, link_name = item.link_name }
   }
