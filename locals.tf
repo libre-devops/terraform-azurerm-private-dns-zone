@@ -41,20 +41,20 @@ locals {
     )
   }
 
-  # Flatten to one instance per (zone, link), keyed "<zone>|<link>".
-  vnet_links = {
+  # Flatten to one instance per (zone, link), keyed "<zone>|<link>". The for_each map carries only
+  # known values (zone and link names); the link config (which can hold an unknown virtual_network_id
+  # from a vnet created in the same apply) is looked up from zone_links in the resource body, so the
+  # instance keys stay known at plan time.
+  vnet_link_keys = {
     for item in flatten([
       for z, links in local.zone_links : [
-        for lk, lv in links : {
-          key                  = "${z}|${lk}"
-          zone_name            = z
-          link_name            = lk
-          virtual_network_id   = lv.virtual_network_id
-          registration_enabled = lv.registration_enabled
-          resolution_policy    = lv.resolution_policy
-          tags                 = lv.tags
-        }
+        for lk, lv in links : { key = "${z}|${lk}", zone_name = z, link_name = lk }
       ]
-    ]) : item.key => item
+    ]) : item.key => { zone_name = item.zone_name, link_name = item.link_name }
   }
+
+  # Vnet ids that have auto-registration enabled on some zone, for the single-registration check.
+  registration_vnet_ids = flatten([
+    for z, links in local.zone_links : [for lk, lv in links : lv.virtual_network_id if lv.registration_enabled]
+  ])
 }

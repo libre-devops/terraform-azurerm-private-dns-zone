@@ -26,13 +26,13 @@ resource "azurerm_private_dns_zone" "this" {
 # Vnet links: the shared default_vnet_links applied to every zone, plus any per-zone links, flattened
 # to one resource per (zone, link).
 resource "azurerm_private_dns_zone_virtual_network_link" "this" {
-  for_each = local.vnet_links
+  for_each = local.vnet_link_keys
 
   resource_group_name   = local.rg_name
-  tags                  = coalesce(each.value.tags, var.tags)
+  tags                  = coalesce(local.zone_links[each.value.zone_name][each.value.link_name].tags, var.tags)
   name                  = each.value.link_name
   private_dns_zone_name = azurerm_private_dns_zone.this[each.value.zone_name].name
-  virtual_network_id    = each.value.virtual_network_id
-  registration_enabled  = each.value.registration_enabled
-  resolution_policy     = each.value.resolution_policy
+  virtual_network_id    = local.zone_links[each.value.zone_name][each.value.link_name].virtual_network_id
+  registration_enabled  = local.zone_links[each.value.zone_name][each.value.link_name].registration_enabled
+  resolution_policy     = local.zone_links[each.value.zone_name][each.value.link_name].resolution_policy
 }

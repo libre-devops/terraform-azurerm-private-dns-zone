@@ -21,7 +21,7 @@ check "regional_zones_have_location" {
 # across all zones enables registration for the same vnet.
 check "single_registration_per_vnet" {
   assert {
-    condition     = length([for l in values(local.vnet_links) : l.virtual_network_id if l.registration_enabled]) == length(distinct([for l in values(local.vnet_links) : l.virtual_network_id if l.registration_enabled]))
+    condition     = length(local.registration_vnet_ids) == length(distinct(local.registration_vnet_ids))
     error_message = "More than one zone enables registration for the same virtual network; Azure allows auto-registration on only one zone per vnet."
   }
 }
