@@ -37,18 +37,20 @@ locals {
   zone_links = {
     for z in local.all_zone_names : z => merge(
       var.default_vnet_links,
-      try(var.private_dns_zones[z].vnet_links, {}),
+      contains(keys(var.private_dns_zones), z) ? var.private_dns_zones[z].vnet_links : {},
     )
   }
 
   # The link names per zone, derived only from the map KEYS of the inputs. keys() is known even when
   # the values (which can hold a virtual_network_id from a vnet created in the same apply) are not,
-  # so the instance keys below stay known at plan time. The unknown-bearing config is looked up from
-  # zone_links only in the resource body, never in for_each.
+  # so the instance keys below stay known at plan time. A contains() guard is used instead of try():
+  # try() returns a wholly-unknown value when its argument contains unknowns (it cannot prove at plan
+  # whether the expression errors), which would poison keys() and make the for_each unknown. The
+  # unknown-bearing config is looked up from zone_links only in the resource body, never in for_each.
   zone_link_names = {
     for z in local.all_zone_names : z => toset(concat(
       keys(var.default_vnet_links),
-      keys(try(var.private_dns_zones[z].vnet_links, {})),
+      contains(keys(var.private_dns_zones), z) ? keys(var.private_dns_zones[z].vnet_links) : [],
     ))
   }
 
