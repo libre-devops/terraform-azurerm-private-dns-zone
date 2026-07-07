@@ -90,11 +90,29 @@ run "links_every_zone_to_default_vnets" {
   }
 }
 
-run "rejects_non_octet_boundary_cidr" {
+run "derives_classless_dash_zones_for_non_octet_cidrs" {
   command = plan
 
   variables {
-    reverse_dns_zone_cidrs = ["192.168.1.0/25"]
+    reverse_dns_zone_cidrs = ["192.0.2.128/26", "10.114.0.0/22"]
+  }
+
+  assert {
+    condition     = contains(keys(azurerm_private_dns_zone.this), "128-26.2.0.192.in-addr.arpa")
+    error_message = "The Azure private reverse DNS documentation example (192.0.2.128/26) should derive 128-26.2.0.192.in-addr.arpa."
+  }
+
+  assert {
+    condition     = contains(keys(azurerm_private_dns_zone.this), "0-22.114.10.in-addr.arpa")
+    error_message = "A /22 should derive its exact classless dash-form zone."
+  }
+}
+
+run "rejects_a_prefix_wider_than_slash_eight" {
+  command = plan
+
+  variables {
+    reverse_dns_zone_cidrs = ["10.0.0.0/7"]
   }
 
   expect_failures = [var.reverse_dns_zone_cidrs]

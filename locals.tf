@@ -2,12 +2,16 @@ locals {
   rg      = provider::azurerm::parse_resource_id(var.resource_group_id)
   rg_name = local.rg.resource_group_name
 
-  # Reverse zones derived from IPv4 CIDRs. The variable validation guarantees a /8, /16 or /24, so
-  # prefix/8 octets of the network reversed and suffixed with in-addr.arpa is the reverse zone name
-  # (192.168.1.0/24 -> 1.168.192.in-addr.arpa).
+  # Reverse zones derived from IPv4 CIDRs. Octet-aligned prefixes (/8, /16, /24) derive the
+  # exact classful zone: prefix/8 network octets reversed and suffixed with in-addr.arpa
+  # (192.168.1.0/24 -> 1.168.192.in-addr.arpa). Non-octet prefixes derive the documented
+  # classless dash form, exact to the range (192.0.2.128/26 -> 128-26.2.0.192.in-addr.arpa,
+  # 10.114.0.0/22 -> 0-22.114.10.in-addr.arpa), per the Azure private reverse DNS guidance.
   reverse_zone_names = [
     for c in var.reverse_dns_zone_cidrs :
-    "${join(".", reverse(slice(split(".", split("/", c)[0]), 0, tonumber(split("/", c)[1]) / 8)))}.in-addr.arpa"
+    tonumber(split("/", c)[1]) % 8 == 0
+    ? "${join(".", reverse(slice(split(".", split("/", c)[0]), 0, floor(tonumber(split("/", c)[1]) / 8))))}.in-addr.arpa"
+    : "${split(".", split("/", c)[0])[floor(tonumber(split("/", c)[1]) / 8)]}-${split("/", c)[1]}${floor(tonumber(split("/", c)[1]) / 8) > 0 ? "." : ""}${join(".", reverse(slice(split(".", split("/", c)[0]), 0, floor(tonumber(split("/", c)[1]) / 8))))}.in-addr.arpa"
   ]
 
   # Region-specific privatelink zones, rendered with location when the caller opts in.

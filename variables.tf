@@ -135,19 +135,20 @@ variable "resource_group_id" {
 }
 
 # IPv4 CIDRs whose in-addr.arpa reverse lookup zone should be created. Only octet-boundary prefixes
-# (/8, /16, /24) map cleanly to a single reverse zone, so those are the accepted values. IPv6 reverse
-# (ip6.arpa) zones should be passed by name in private_dns_zones.
+# Octet-aligned prefixes (/8, /16, /24) derive the exact classful zone; anything else derives the
+# documented classless dash form, exact to the range. IPv6 reverse (ip6.arpa) zones should be
+# passed by name in private_dns_zones.
 variable "reverse_dns_zone_cidrs" {
-  description = "Set of IPv4 CIDRs (/8, /16 or /24) to create in-addr.arpa reverse zones for. For example \"192.168.1.0/24\" creates \"1.168.192.in-addr.arpa\"."
+  description = "Set of IPv4 CIDRs to create in-addr.arpa reverse zones for. \"192.168.1.0/24\" creates \"1.168.192.in-addr.arpa\"; a non-octet prefix creates the documented classless dash-form zone, exact to the range (\"192.0.2.128/26\" creates \"128-26.2.0.192.in-addr.arpa\")."
   type        = set(string)
   default     = []
 
   validation {
     condition = alltrue([
       for c in var.reverse_dns_zone_cidrs :
-      can(cidrhost(c, 0)) && !strcontains(c, ":") && contains([8, 16, 24], tonumber(split("/", c)[1]))
+      can(cidrhost(c, 0)) && !strcontains(c, ":") && tonumber(split("/", c)[1]) >= 8 && tonumber(split("/", c)[1]) <= 32
     ])
-    error_message = "Each reverse_dns_zone_cidrs entry must be an IPv4 CIDR with a /8, /16 or /24 prefix."
+    error_message = "Each reverse_dns_zone_cidrs entry must be an IPv4 CIDR with a prefix between /8 and /32."
   }
 }
 
